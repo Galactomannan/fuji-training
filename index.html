@@ -598,6 +598,7 @@ body{
   padding:16px;
   border:1px solid var(--hairline-soft);
   transition:all 0.15s var(--ease);
+  position:relative;
 }
 .ex-card:hover{border-color:var(--hairline)}
 .ex-name{font-family:var(--font-display);font-size:14.5px;font-weight:700;letter-spacing:-0.015em}
@@ -608,6 +609,21 @@ body{
   background:linear-gradient(135deg,rgba(192,132,252,0.05),var(--card-elev));
 }
 .ex-card.plyo .ex-tag{background:rgba(192,132,252,0.15);color:var(--purple)}
+.ex-yt-btn{
+  position:absolute;top:12px;right:12px;
+  width:30px;height:30px;border-radius:8px;
+  background:rgba(255,0,0,0.1);
+  border:1px solid rgba(255,0,0,0.2);
+  color:#FF4444;
+  display:flex;align-items:center;justify-content:center;
+  transition:all 0.15s var(--ease);
+  cursor:pointer;
+  text-decoration:none;
+  flex-shrink:0;
+}
+.ex-yt-btn:hover{background:rgba(255,0,0,0.22);border-color:rgba(255,0,0,0.5);transform:scale(1.08)}
+.ex-yt-btn:active{transform:scale(0.94)}
+.ex-yt-btn svg{width:16px;height:16px}
 
 .evidence-banner{
   background:linear-gradient(135deg,rgba(255,107,0,0.07),transparent);
@@ -2635,23 +2651,40 @@ const SVG_PULLUP=_svg('<rect x="3" y="3" width="18" height="2"/><circle cx="12" 
 const SVG_FOOT=_svg('<path d="M6 4c0-1 1-2 2-2s2 1 2 2v3c0 1-.5 2-1.5 2.5S6 10 6 12v6c0 1 1 2 2 2h6c2 0 4-2 4-4 0-3-2-5-4-6"/>');
 const SVG_JUMP=_svg('<path d="M12 3l-4 5h3v5h2V8h3z"/><rect x="5" y="16" width="14" height="4" rx="1"/>');
 const SVG_DOWN=_svg('<path d="M12 21l4-5h-3v-5h-2v5H8z"/><rect x="5" y="3" width="14" height="4" rx="1"/>');
+// YouTube logo icon (simplified play button in rect)
+function iconYouTube(){return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 7s-.3-2-1.2-2.8c-1.1-1.2-2.4-1.2-3-1.3C16.4 2.8 12 2.8 12 2.8s-4.4 0-6.8.2c-.6.1-1.9.1-3 1.3C1.3 5 1 7 1 7S.7 9.2.7 11.3v2c0 2.1.3 4.3.3 4.3s.3 2 1.2 2.8c1.1 1.2 2.6 1.1 3.3 1.2C7.3 21.8 12 21.8 12 21.8s4.4 0 6.8-.3c.6-.1 1.9-.1 3-1.3.9-.8 1.2-2.8 1.2-2.8s.3-2.1.3-4.3v-2C23.3 9.2 23 7 23 7zm-13.5 8.7V8.3l8.1 3.7-8.1 3.7z"/></svg>`;}
+
+// YouTube search URL helper — links to a search so videos never go stale
+function ytSearch(q){return "https://www.youtube.com/results?search_query="+encodeURIComponent(q);}
 
 const STRENGTH_DAYS={
   A:[
-    {n:"Barbell Back Squat",p:"3×5 · ≥80% 1RM · 3 min rest",tag:"Primary HL / RE",icon:SVG_BARBELL},
-    {n:"Romanian Deadlift",p:"3×6 · 75% 1RM · 2 min",tag:"Posterior chain",icon:SVG_BARBELL},
-    {n:"Bench Press",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset →",icon:SVG_PRESS},
-    {n:"Barbell Bent-Over Row",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset",icon:SVG_PULLUP},
-    {n:"Single-leg Calf Raise",p:"3×12 · BW+ · 60s",tag:"Tendon stiffness",icon:SVG_FOOT},
-    {n:"Box Jump",p:"3×5 · BW · 2 min",tag:"Plyometric / SSC",plyo:true,icon:SVG_JUMP}
+    {n:"Barbell Back Squat",p:"3×5 · ≥80% 1RM · 3 min rest",tag:"Primary HL / RE",icon:SVG_BARBELL,
+     yt:ytSearch("barbell back squat proper form technique")},
+    {n:"Romanian Deadlift",p:"3×6 · 75% 1RM · 2 min",tag:"Posterior chain",icon:SVG_BARBELL,
+     yt:ytSearch("romanian deadlift proper form tutorial")},
+    {n:"Bench Press",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset →",icon:SVG_PRESS,
+     yt:ytSearch("barbell bench press proper form technique")},
+    {n:"Barbell Bent-Over Row",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset",icon:SVG_PULLUP,
+     yt:ytSearch("barbell bent over row proper form tutorial")},
+    {n:"Single-leg Calf Raise",p:"3×12 · BW+ · 60s",tag:"Tendon stiffness",icon:SVG_FOOT,
+     yt:ytSearch("single leg calf raise form technique running")},
+    {n:"Box Jump",p:"3×5 · BW · 2 min",tag:"Plyometric / SSC",plyo:true,icon:SVG_JUMP,
+     yt:ytSearch("box jump plyometric technique proper landing form")}
   ],
   B:[
-    {n:"Bulgarian Split Squat",p:"3×6/leg · ≥80% 1RM · 2 min",tag:"Unilateral HL",icon:SVG_LUNGE},
-    {n:"Hip Thrust",p:"3×8 · 75% 1RM · 90s",tag:"Glute power",icon:SVG_HIP},
-    {n:"Overhead Press",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset →",icon:SVG_PRESS},
-    {n:"Pull-up / Lat Pulldown",p:"3×6–8 · BW/weighted · 90s",tag:"AA superset",icon:SVG_PULLUP},
-    {n:"Single-leg Hop",p:"3×5/leg · BW · 2 min",tag:"Reactive strength",icon:SVG_JUMP},
-    {n:"Drop Jump",p:"3×5 · 20–30cm box · 2 min",tag:"Tendon stiffness",plyo:true,icon:SVG_DOWN}
+    {n:"Bulgarian Split Squat",p:"3×6/leg · ≥80% 1RM · 2 min",tag:"Unilateral HL",icon:SVG_LUNGE,
+     yt:ytSearch("bulgarian split squat proper form dumbbell barbell")},
+    {n:"Hip Thrust",p:"3×8 · 75% 1RM · 90s",tag:"Glute power",icon:SVG_HIP,
+     yt:ytSearch("barbell hip thrust proper form glutes")},
+    {n:"Overhead Press",p:"3×6–8 · 75% 1RM · 90s",tag:"AA superset →",icon:SVG_PRESS,
+     yt:ytSearch("overhead press barbell proper form tutorial")},
+    {n:"Pull-up / Lat Pulldown",p:"3×6–8 · BW/weighted · 90s",tag:"AA superset",icon:SVG_PULLUP,
+     yt:ytSearch("pull up proper form tutorial lat pulldown")},
+    {n:"Single-leg Hop",p:"3×5/leg · BW · 2 min",tag:"Reactive strength",icon:SVG_JUMP,
+     yt:ytSearch("single leg hop plyometric reactive strength technique")},
+    {n:"Drop Jump",p:"3×5 · 20–30cm box · 2 min",tag:"Tendon stiffness",plyo:true,icon:SVG_DOWN,
+     yt:ytSearch("drop jump plyometric technique tendon stiffness")}
   ]
 };
 const PERIODIZATION=[
@@ -2686,6 +2719,7 @@ function renderStrength(){
         <div class="card-h" style="margin-bottom:12px">Day A — Mon · Horizontal Push/Pull + Lower</div>
         <div class="grid grid-2">${STRENGTH_DAYS.A.map(e=>`
           <div class="ex-card ${e.plyo?"plyo":""}">
+            ${e.yt?`<a class="ex-yt-btn" href="${e.yt}" target="_blank" rel="noopener noreferrer" aria-label="Watch ${e.n} on YouTube">${iconYouTube()}</a>`:""}
             <div class="ex-icon">${e.icon||""}</div>
             <div class="ex-name">${e.n}</div>
             <div class="ex-prescription">${e.p}</div>
@@ -2696,6 +2730,7 @@ function renderStrength(){
         <div class="card-h" style="margin-bottom:12px">Day B — Thu · Vertical Push/Pull + Lower</div>
         <div class="grid grid-2">${STRENGTH_DAYS.B.map(e=>`
           <div class="ex-card ${e.plyo?"plyo":""}">
+            ${e.yt?`<a class="ex-yt-btn" href="${e.yt}" target="_blank" rel="noopener noreferrer" aria-label="Watch ${e.n} on YouTube">${iconYouTube()}</a>`:""}
             <div class="ex-icon">${e.icon||""}</div>
             <div class="ex-name">${e.n}</div>
             <div class="ex-prescription">${e.p}</div>
