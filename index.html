@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#1C1C1E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -103,6 +103,9 @@ body{
 ::-webkit-scrollbar-thumb{background:var(--hairline);border-radius:5px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--card-hover)}
 
+/* === KEYFRAMES === */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
 /* === LAYOUT === */
 #app{display:flex;min-height:100vh;min-height:100svh}
 
@@ -170,11 +173,13 @@ body{
   color:var(--text-2);
   font-size:13.5px;font-weight:500;
   min-height:42px;
+  width:100%;text-align:left;cursor:pointer;
   transition:all 0.18s var(--ease);
   position:relative;
   letter-spacing:-0.005em;
 }
 .nav-item:hover{background:rgba(255,255,255,0.03);color:var(--text)}
+.nav-item:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
 .nav-item.active{
   background:linear-gradient(90deg,rgba(255,107,0,0.14),rgba(255,107,0,0.02) 80%);
   color:var(--text);
@@ -701,11 +706,12 @@ body{
     padding:6px 8px;
     color:var(--text-3);
     font-size:9.5px;font-weight:700;
-    min-width:56px;
+    min-width:56px;cursor:pointer;
     letter-spacing:0.08em;text-transform:uppercase;
     transition:color 0.15s var(--ease);
   }
   .mt-item.active{color:var(--orange)}
+  .mt-item:focus-visible{outline:2px solid var(--orange);outline-offset:-2px;border-radius:8px}
   .mt-item svg{width:22px;height:22px}
   .view-title{font-size:28px}
   .week-bar{flex-direction:column;align-items:stretch}
@@ -1310,12 +1316,33 @@ const Store = {
 };
 
 // quick test on load
+let __storageOK=true;
 (function testStore(){
   const k="__fuji_test";
   Store.set(k,{ok:1});
   const r=Store.get(k);
   Store.clear(k);
-  if(!r||r.ok!==1)alert("Warning: localStorage not available. Data won't persist.");
+  if(!r||r.ok!==1) __storageOK=false;
+})();
+
+/* Schema migrations — bump CURRENT_SCHEMA when shape of stored data changes
+   and add a step to MIGRATIONS that transforms previous → new. Runs once. */
+const SCHEMA_KEY="fuji_schema_version";
+const CURRENT_SCHEMA=1;
+const MIGRATIONS={
+  // Example for future use:
+  // 2: function migrateTo2(){ const s=Store.get("fuji_sessions",{}); /* mutate */ Store.set("fuji_sessions",s); }
+};
+(function runMigrations(){
+  if(!__storageOK)return;
+  const from=Store.get(SCHEMA_KEY,0);
+  if(from===CURRENT_SCHEMA)return;
+  for(let v=from+1; v<=CURRENT_SCHEMA; v++){
+    if(typeof MIGRATIONS[v]==="function"){
+      try{ MIGRATIONS[v](); }catch(e){ console.warn("[migrate] step "+v+" failed:",e); }
+    }
+  }
+  Store.set(SCHEMA_KEY,CURRENT_SCHEMA);
 })();
 
 /* =========================================================================
@@ -1326,11 +1353,22 @@ const DAY_NAMES=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAY_NAMES_FULL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-function parseISO(s){const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);}
-function fmtISO(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
-function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
-function fmtShort(d){return d.getDate()+" "+MONTHS[d.getMonth()];}
-function fmtLong(d){return DAY_NAMES_FULL[(d.getDay()+6)%7]+", "+d.getDate()+" "+MONTHS[d.getMonth()]+" "+d.getFullYear();}
+// All date math uses local-calendar dates anchored to UTC midnight to avoid
+// DST off-by-one when the user travels across timezones (Bangkok→Japan etc.).
+function parseISO(s){const[y,m,d]=s.split("-").map(Number);return new Date(Date.UTC(y,m-1,d));}
+function fmtISO(d){
+  // Treat any Date as a calendar date in its own UTC slot.
+  return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0");
+}
+function addDays(d,n){const x=new Date(d);x.setUTCDate(x.getUTCDate()+n);return x;}
+function fmtShort(d){return d.getUTCDate()+" "+MONTHS[d.getUTCMonth()];}
+function fmtLong(d){return DAY_NAMES_FULL[(d.getUTCDay()+6)%7]+", "+d.getUTCDate()+" "+MONTHS[d.getUTCMonth()]+" "+d.getUTCFullYear();}
+
+// Today as a UTC-anchored calendar date, derived from the user's local clock.
+function todayUTC(){
+  const n=new Date();
+  return new Date(Date.UTC(n.getFullYear(),n.getMonth(),n.getDate()));
+}
 
 function dateForWeekDay(weekIndex,dayIndex){
   // weekIndex: 1..32, dayIndex: 0..6 (Mon..Sun)
@@ -1339,13 +1377,13 @@ function dateForWeekDay(weekIndex,dayIndex){
 }
 function weekIndexForDate(d){
   const start=parseISO(ATHLETE.planStart);
-  const diff=Math.floor((d-start)/(86400000));
+  // Both d and start are UTC-anchored midnight → simple ms diff is DST-safe.
+  const diff=Math.floor((d-start)/86400000);
   return Math.floor(diff/7)+1;
 }
-function todayISO(){return fmtISO(new Date());}
+function todayISO(){return fmtISO(todayUTC());}
 function daysUntil(iso){
-  const t=new Date();t.setHours(0,0,0,0);
-  return Math.ceil((parseISO(iso)-t)/86400000);
+  return Math.ceil((parseISO(iso)-todayUTC())/86400000);
 }
 
 /* =========================================================================
@@ -1411,7 +1449,7 @@ function speedSessionFor(w){
   if(w===13)         return {type:"speed",title:"Tempo 2×10min",detail:"2×10min @ HR 160–168 (Z2) / 5min jog · ~60min · introduce sustained Z2",duration:60,hrTarget:"160–168",zone:"z2",evidence:evBridge};
   if(w===14)         return {type:"speed",title:"VO₂max 4×4min (maintenance)",detail:"4×4min @ HR >175 (Z3) / 4min jog · ~50min",duration:50,hrTarget:">175 (Z3)",zone:"z3",evidence:evBridge};
   if(w===16)         return {type:"speed",title:"Threshold 3×8min",detail:"3×8min @ VT2 HR 168–171 / 4min jog · ~55min",duration:55,hrTarget:"168–171",zone:"z2",evidence:evBridge};
-  if(w===17)         return {type:"speed",title:"Threshold 4×7min",detail:"4×7min @ HR 168–172 / 3min jog · ~60min · final Z2 build before specificity",duration:60,hrTarget:"168–172",zone:"z2",evidence:evBridge};
+  if(w===17)         return {type:"speed",title:"Threshold 4×7min",detail:"4×7min @ HR 168–170 (just under VT2 171) / 3min jog · ~60min · final Z2 build before specificity",duration:60,hrTarget:"168–170",zone:"z2",evidence:evBridge};
 
   // Phase 3 (W19–27) — race-specific PYRAMIDAL
   if(w<=22) return {type:"speed",title:"Marathon-pace tempo 3×12min",detail:"3×12min @ HR 155–162 (MP) / 3min jog · Practice race fueling",duration:60,hrTarget:"155–162",zone:"z2",evidence:evPYR};
@@ -1531,9 +1569,8 @@ const State = {
   view:"weekly",
   currentWeek:1,
   init(){
-    // Determine current week from today's date
-    const t=new Date();t.setHours(0,0,0,0);
-    const wi=weekIndexForDate(t);
+    // Determine current week from today's date (TZ-anchored to UTC midnight)
+    const wi=weekIndexForDate(todayUTC());
     if(wi>=1&&wi<=ATHLETE.totalWeeks) this.currentWeek=wi;
     else if(wi<1) this.currentWeek=1;
     else this.currentWeek=ATHLETE.totalWeeks;
@@ -1572,10 +1609,10 @@ function iconNote(){return _svg('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012
 function renderNav(){
   const el=document.getElementById("nav-list");
   el.innerHTML=NAV.map(n=>`
-    <a class="nav-item${State.view===n.id?" active":""}" data-nav="${n.id}">
+    <button type="button" class="nav-item${State.view===n.id?" active":""}" data-nav="${n.id}" aria-current="${State.view===n.id?"page":"false"}">
       <span class="nav-icon">${n.icon()}</span>
       <span>${n.label}</span>
-    </a>`).join("");
+    </button>`).join("");
   el.querySelectorAll("[data-nav]").forEach(a=>{
     a.addEventListener("click",()=>switchView(a.dataset.nav));
   });
@@ -1584,7 +1621,7 @@ function renderNav(){
   const mt=document.getElementById("mobile-tabs");
   mt.innerHTML=MOBILE_NAV.map(id=>{
     const n=NAV.find(x=>x.id===id);
-    return `<a class="mt-item${State.view===id?" active":""}" data-nav="${id}">${n.icon()}<span>${n.label.split(" ")[0]}</span></a>`;
+    return `<button type="button" class="mt-item${State.view===id?" active":""}" data-nav="${id}" aria-current="${State.view===id?"page":"false"}" aria-label="${n.label}">${n.icon()}<span>${n.label.split(" ")[0]}</span></button>`;
   }).join("");
   mt.querySelectorAll("[data-nav]").forEach(a=>{
     a.addEventListener("click",()=>switchView(a.dataset.nav));
@@ -1594,7 +1631,7 @@ function renderNav(){
 function renderCountdown(){
   const days=daysUntil(ATHLETE.race.date);
   document.getElementById("cd-days").textContent=days>=0?days:0;
-  const wkElapsed=Math.max(0,Math.min(ATHLETE.totalWeeks,weekIndexForDate(new Date())));
+  const wkElapsed=Math.max(0,Math.min(ATHLETE.totalWeeks,weekIndexForDate(todayUTC())));
   document.getElementById("cd-progress").style.width=Math.max(0,Math.min(100,(wkElapsed/ATHLETE.totalWeeks)*100))+"%";
   document.getElementById("cd-meta").textContent=`Week ${Math.max(0,wkElapsed)} / ${ATHLETE.totalWeeks}`;
   // Mobile topbar countdown pill
@@ -1608,14 +1645,26 @@ function renderCountdown(){
 function isMobileLayout(){
   return window.matchMedia("(max-width:767px),(orientation:landscape) and (max-height:500px)").matches;
 }
+let __scrollLockY=0;
 function toggleDrawer(force){
   const sb=document.getElementById("sidebar");
   const bd=document.getElementById("drawer-backdrop");
   if(!sb||!bd)return;
-  const open=force!==undefined?force:!sb.classList.contains("open");
+  const wasOpen=sb.classList.contains("open");
+  const open=force!==undefined?force:!wasOpen;
+  if(open===wasOpen)return;
   sb.classList.toggle("open",open);
   bd.classList.toggle("open",open);
-  document.body.classList.toggle("drawer-locked",open);
+  // Lock body scroll without losing scroll position (position:fixed jumps to top otherwise).
+  if(open){
+    __scrollLockY=window.scrollY||document.documentElement.scrollTop||0;
+    document.body.style.top=`-${__scrollLockY}px`;
+    document.body.classList.add("drawer-locked");
+  } else {
+    document.body.classList.remove("drawer-locked");
+    document.body.style.top="";
+    window.scrollTo(0,__scrollLockY);
+  }
 }
 function setupMobileChrome(){
   // Populate hamburger + close icons
@@ -1657,6 +1706,7 @@ const VIEW_RENDERERS={
 };
 
 /* Number animation — count up on view enter */
+const __aniRafs=new WeakMap(); // el → rafId so a re-render can cancel a stale frame
 function animateNumberEl(el){
   if(el.dataset.animated==="1")return;
   const raw=el.textContent.trim();
@@ -1669,16 +1719,23 @@ function animateNumberEl(el){
   const start=performance.now();
   el.textContent="0";
   function frame(now){
+    if(!el.isConnected){__aniRafs.delete(el);return;} // bail if DOM was replaced
     const t=Math.min(1,(now-start)/duration);
     const eased=1-Math.pow(1-t,3);
     const v=target*eased;
     el.textContent=isInt?Math.round(v):v.toFixed(1);
-    if(t<1)requestAnimationFrame(frame);
+    if(t<1)__aniRafs.set(el,requestAnimationFrame(frame));
+    else __aniRafs.delete(el);
   }
-  requestAnimationFrame(frame);
+  __aniRafs.set(el,requestAnimationFrame(frame));
 }
 function animateAllNumbers(scope){
-  (scope||document).querySelectorAll(".ani-num").forEach(el=>{el.dataset.animated="";animateNumberEl(el);});
+  (scope||document).querySelectorAll(".ani-num").forEach(el=>{
+    const prev=__aniRafs.get(el);
+    if(prev)cancelAnimationFrame(prev);
+    el.dataset.animated="";
+    animateNumberEl(el);
+  });
 }
 
 /* Sparkline SVG generator */
@@ -1736,13 +1793,15 @@ function fmtPaceFromSec(sec){
   return `${mm}:${String(ss).padStart(2,"0")}`;
 }
 
+let __viewAniTimer=null;
 function switchView(id){
   State.view=id;
   document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===id));
   renderNav();
   if(VIEW_RENDERERS[id])VIEW_RENDERERS[id]();
-  // Animate metric numbers on view enter
-  setTimeout(()=>animateAllNumbers(document.getElementById("view-"+id)),60);
+  // Animate metric numbers on view enter — cancel any pending one from a prior fast switch.
+  if(__viewAniTimer)clearTimeout(__viewAniTimer);
+  __viewAniTimer=setTimeout(()=>animateAllNumbers(document.getElementById("view-"+id)),60);
   // Auto-close mobile drawer when navigating
   if(isMobileLayout())toggleDrawer(false);
   window.scrollTo({top:0,behavior:"instant"});
@@ -1792,10 +1851,12 @@ function renderWeekly(){
         if(lg.actualDistance)kmLogged+=parseFloat(lg.actualDistance)||0;
         if(lg.avgHR){hrSum+=parseInt(lg.avgHR);hrCount++;}
         const dur=parseInt(lg.actualDuration)||week.days[d].duration||0;
-        if(week.days[d].zone==="z1")z1Min+=dur;
-        else if(week.days[d].zone==="z2")z2Min+=dur;
-        else if(week.days[d].zone==="z3")z3Min+=dur;
-        else if(week.days[d].zone==="mixed"){z1Min+=dur*0.5;z2Min+=dur*0.4;z3Min+=dur*0.1;}
+        // Prefer the actually-performed zone (from logged type) over the planned zone.
+        const z=zoneForLog(lg,week.days[d]);
+        if(z==="z1")z1Min+=dur;
+        else if(z==="z2")z2Min+=dur;
+        else if(z==="z3")z3Min+=dur;
+        else if(z==="mixed"){z1Min+=dur*0.5;z2Min+=dur*0.4;z3Min+=dur*0.1;}
       }
       if(lg.status==="modified")sessionsModified++;
     }
@@ -1819,7 +1880,7 @@ function renderWeekly(){
         <div class="day-stripe t-${s.type}"></div>
         <div class="day-label">
           <div class="day-name">${DAY_NAMES[d]}</div>
-          <div class="day-date">${dateObj.getDate()}</div>
+          <div class="day-date">${dateObj.getUTCDate()}</div>
         </div>
         <div class="day-body">
           <div class="day-type-row">
@@ -1837,7 +1898,7 @@ function renderWeekly(){
           ${lg.notes?`<div class="day-evidence" style="color:var(--text-2);font-style:normal">📝 ${escapeHtml(lg.notes)}</div>`:""}
         </div>
         <div class="day-actions">
-          <button class="icon-btn edit-btn" title="Edit">${iconEdit()}</button>
+          <button class="icon-btn edit-btn" title="Edit" aria-label="Edit ${escapeHtml(s.title)}">${iconEdit()}</button>
           <button class="checkbox ${isDone?"done":""} ${isSkipped?"skipped":""}" title="Mark done">${iconCheck()}</button>
         </div>
       </div>`;
@@ -1857,17 +1918,17 @@ function renderWeekly(){
 
     <div class="week-bar">
       <div class="week-nav">
-        <button class="wk-arrow" id="wk-prev">${iconLeft()}</button>
+        <button class="wk-arrow" id="wk-prev" aria-label="Previous week">${iconLeft()}</button>
         <div class="wk-label">
           <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
             <select id="wk-picker" style="background:transparent;color:var(--text);font-weight:700;font-size:15px;border:none;text-align:center;padding:2px 4px;cursor:pointer;font-family:var(--font-display);letter-spacing:-0.015em">
               ${PLAN.map((wk,i)=>{const s=dateForWeekDay(wk.weekNum,0),e=dateForWeekDay(wk.weekNum,6);return `<option value="${wk.weekNum}" ${wk.weekNum===w?"selected":""}>W${wk.weekNum} · ${fmtShort(s)}–${fmtShort(e)} · ${wk.phase.short}${wk.isRecovery?" (rec)":""}</option>`;}).join("")}
             </select>
-            ${w===weekIndexForDate(new Date())?'<span class="today-badge">Today</span>':''}
+            ${w===weekIndexForDate(todayUTC())?'<span class="today-badge">Today</span>':''}
           </div>
           <div class="wk-range">${fmtShort(startDate)} — ${fmtShort(endDate)}, 2026 · Week ${w} of 32</div>
         </div>
-        <button class="wk-arrow" id="wk-next">${iconRight()}</button>
+        <button class="wk-arrow" id="wk-next" aria-label="Next week">${iconRight()}</button>
       </div>
       <div class="row">
         <span class="chip" style="background:${phase.color}33;color:${phase.color}">${phase.name}</span>
@@ -1919,14 +1980,15 @@ function renderWeekly(){
   document.getElementById("wk-next").addEventListener("click",()=>{if(State.currentWeek<32){State.currentWeek++;renderWeekly();}});
   document.getElementById("wk-picker").addEventListener("change",e=>{State.currentWeek=parseInt(e.target.value);renderWeekly();});
   document.getElementById("btn-today-jump").addEventListener("click",()=>{
-    const wi=weekIndexForDate(new Date());
+    const wi=weekIndexForDate(todayUTC());
     if(wi>=1&&wi<=32){State.currentWeek=wi;renderWeekly();}
   });
   document.getElementById("btn-log-session").addEventListener("click",()=>{
     const today=todayISO();
-    const wi=weekIndexForDate(new Date());
+    const t=todayUTC();
+    const wi=weekIndexForDate(t);
     if(wi>=1&&wi<=32){
-      const dow=(new Date().getDay()+6)%7;
+      const dow=(t.getUTCDay()+6)%7;
       openSessionModal(wi,dow,today);
     } else {
       openSessionModal(State.currentWeek,0,fmtISO(dateForWeekDay(State.currentWeek,0)));
@@ -2011,7 +2073,7 @@ function openSessionModal(wIdx,dIdx,date){
         <div class="modal-title">Log Session</div>
         <div class="small muted mt-8">${fmtLong(parseISO(date))} · Planned: ${session.title}</div>
       </div>
-      <button class="icon-btn modal-close">${iconClose()}</button>
+      <button class="icon-btn modal-close" aria-label="Close">${iconClose()}</button>
     </div>
     <div class="modal-body">
       <div class="field">
@@ -2159,7 +2221,7 @@ function closeModal(){document.getElementById("modal-root").innerHTML="";}
 function renderDashboard(){
   const days=daysUntil(ATHLETE.race.date);
   const log=Store.get(STORAGE.sessions,{});
-  const today=new Date();today.setHours(0,0,0,0);
+  const today=todayUTC();
   const wIdx=Math.max(1,Math.min(32,weekIndexForDate(today)));
 
   // Total km logged
@@ -2175,7 +2237,7 @@ function renderDashboard(){
       const lg=log[date];if(!lg)continue;
       if(lg.status!=="done"&&lg.status!=="modified")continue;
       const dur=parseInt(lg.actualDuration)||PLAN[w-1].days[d].duration||0;
-      const z=PLAN[w-1].days[d].zone;
+      const z=zoneForLog(lg,PLAN[w-1].days[d]);
       if(z==="z1")z1+=dur;else if(z==="z2")z2+=dur;else if(z==="z3")z3+=dur;
       else if(z==="mixed"){z1+=dur*0.5;z2+=dur*0.4;z3+=dur*0.1;}
     }
@@ -2200,7 +2262,7 @@ function renderDashboard(){
       if(lg.actualDistance)wkKm+=parseFloat(lg.actualDistance)||0;
       if(lg.status==="done"||lg.status==="modified"){
         const dur=parseInt(lg.actualDuration)||PLAN[w-1].days[d].duration||0;
-        const z=PLAN[w-1].days[d].zone;wTot+=dur;
+        const z=zoneForLog(lg,PLAN[w-1].days[d]);wTot+=dur;
         if(z==="z1")wZ1+=dur;else if(z==="mixed")wZ1+=dur*0.5;
       }
     }
@@ -2208,9 +2270,8 @@ function renderDashboard(){
     sparkZ1.push(wTot?Math.round(wZ1/wTot*100):0);
   }
   // last 7 days km
-  const today_=new Date();today_.setHours(0,0,0,0);
   for(let i=6;i>=0;i--){
-    const dt=fmtISO(addDays(today_,-i));const lg=log[dt];
+    const dt=fmtISO(addDays(today,-i));const lg=log[dt];
     sparkDailyKm.push(lg&&lg.actualDistance?parseFloat(lg.actualDistance)||0:0);
   }
 
@@ -2250,7 +2311,7 @@ function renderDashboard(){
       <div>
         <div class="view-title">Command Center</div>
         <div class="tagline">Evidence-Based Endurance Training</div>
-        <div class="view-sub" style="margin-top:8px">${fmtLong(new Date())} · ${ATHLETE.name}</div>
+        <div class="view-sub" style="margin-top:8px">${fmtLong(todayUTC())} · ${ATHLETE.name}</div>
       </div>
       <div class="row">
         <span class="chip chip-orange">SUB 4:30 · 6:23/KM</span>
@@ -2258,7 +2319,7 @@ function renderDashboard(){
     </div>
 
     <!-- ===== HERO: FUJI RACE COUNTDOWN ===== -->
-    <div class="race-hero mb-16" onclick="switchView('raceweek')" style="cursor:pointer">
+    <div class="race-hero mb-16" data-go="raceweek" role="button" tabindex="0" style="cursor:pointer">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap;position:relative;z-index:1">
         <div>
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -2281,13 +2342,12 @@ function renderDashboard(){
         <div class="progress" style="height:5px"><div class="progress-fill" style="width:${wIdx/32*100}%"></div></div>
       </div>
     </div>
-    <style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}</style>
 
     <!-- ===== SIDE RACES ===== -->
     <div class="grid grid-2 mb-24">
       ${SECONDARY_RACES.map(r=>{
         const d=daysUntil(r.date);
-        return `<div class="race-mini" onclick="switchView('sideraces')" style="--accent:${r.color}">
+        return `<div class="race-mini" data-go="sideraces" role="button" tabindex="0" style="--accent:${r.color}">
           <div style="display:flex;justify-content:space-between;align-items:flex-start">
             <div>
               <div style="display:flex;align-items:center;gap:8px">
@@ -2311,7 +2371,7 @@ function renderDashboard(){
       <div class="metric card card-elev">
         <div class="metric-label">TOTAL VOLUME</div>
         <div class="metric-value"><span class="ani-num">${totalKm.toFixed(0)}</span><span style="font-size:14px;color:var(--text-2);font-weight:500"> km</span></div>
-        <div class="metric-sub">${Math.round(totalKm/totalPlanned*100)}% of ${totalPlanned} planned</div>
+        <div class="metric-sub">${totalPlanned?Math.round(totalKm/totalPlanned*100):0}% of ${totalPlanned} planned</div>
         <div class="spark-row">${sparkline(sparkVol,{color:"#FF6B00",fill:true})}</div>
       </div>
       <div class="metric card card-elev">
@@ -2323,7 +2383,7 @@ function renderDashboard(){
       <div class="metric card card-elev">
         <div class="metric-label">THIS WEEK</div>
         <div class="metric-value"><span class="ani-num">${curKm.toFixed(0)}</span><span style="font-size:18px;color:var(--text-2);font-weight:500"> / ${curTarget}</span></div>
-        <div class="metric-sub">km logged · ${Math.round(curKm/curTarget*100)}%</div>
+        <div class="metric-sub">km logged · ${curTarget?Math.round(curKm/curTarget*100):0}%</div>
         <div class="spark-row">${sparkline(sparkDailyKm,{color:"#60A5FA",fill:true})}</div>
       </div>
       <div class="metric card card-elev" style="border-color:${acwr.color==='var(--green)'?'rgba(52,211,153,0.3)':acwr.color==='var(--red)'?'rgba(244,63,94,0.3)':acwr.color==='var(--orange)'?'rgba(255,107,0,0.3)':'var(--hairline-soft)'}">
@@ -2346,13 +2406,13 @@ function renderDashboard(){
       <div class="card">
         <div class="card-h">THIS WEEK · W${wIdx}</div>
         ${sessionList}
-        <div class="mt-12"><button class="btn btn-ghost" style="width:100%" onclick="switchView('weekly')">Open weekly plan →</button></div>
+        <div class="mt-12"><button class="btn btn-ghost" style="width:100%" data-go="weekly">Open weekly plan →</button></div>
       </div>
       <div class="card" style="border:1px solid rgba(255,107,0,0.18)">
         <div class="card-h" style="color:var(--orange)">⚡ NEXT KEY SESSION</div>
         ${nextKey?`
           <div style="font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-0.02em;line-height:1.2">${nextKey.session.title}</div>
-          <div style="font-size:11.5px;color:var(--orange);margin-top:6px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase">${fmtShort(parseISO(nextKey.date))} · ${DAY_NAMES_FULL[(parseISO(nextKey.date).getDay()+6)%7]}</div>
+          <div style="font-size:11.5px;color:var(--orange);margin-top:6px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase">${fmtShort(parseISO(nextKey.date))} · ${DAY_NAMES_FULL[(parseISO(nextKey.date).getUTCDay()+6)%7]}</div>
           <div class="small mt-12" style="color:var(--text-2);line-height:1.5">${nextKey.session.detail}</div>
           <div class="row mt-12">
             <span class="chip">⏱ ${nextKey.session.duration} MIN</span>
@@ -2377,7 +2437,7 @@ function renderDashboard(){
       </div>
     </div>
 
-    <div class="card mt-16" style="cursor:pointer" onclick="switchView('biometrics')">
+    <div class="card mt-16" data-go="biometrics" role="button" tabindex="0" style="cursor:pointer">
       <div class="row" style="justify-content:space-between">
         <div>
           <div class="card-h" style="margin:0">Daily Readiness · Biometrics</div>
@@ -2388,21 +2448,31 @@ function renderDashboard(){
     </div>
   `;
 
+  // Wire up data-go navigation (replaces inline onclick — keeps CSP-strict happy)
+  document.querySelectorAll("#view-dashboard [data-go]").forEach(el=>{
+    const target=el.dataset.go;
+    el.addEventListener("click",()=>switchView(target));
+    el.addEventListener("keydown",e=>{
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();switchView(target);}
+    });
+  });
+
   drawVolumeChart(wIdx,log);
 }
 
 function computeACWR(log,wIdx){
   // Acute = total minutes last 7 days. Chronic = avg total min/wk over last 28d (4 wk).
-  const today=new Date();today.setHours(0,0,0,0);
+  const today=todayUTC();
   let acute=0,chronic=0;
   for(let i=0;i<28;i++){
     const d=addDays(today,-i);
+    const wi=weekIndexForDate(d);
+    if(wi<1||wi>ATHLETE.totalWeeks) continue; // skip days before plan starts / after race
     const date=fmtISO(d);
     const lg=log[date];
     if(!lg)continue;
     if(lg.status!=="done"&&lg.status!=="modified")continue;
-    const wi=weekIndexForDate(d);
-    const dow=(d.getDay()+6)%7;
+    const dow=(d.getUTCDay()+6)%7;
     const dur=parseInt(lg.actualDuration)||(PLAN[wi-1]?PLAN[wi-1].days[dow]?.duration:0)||0;
     if(i<7)acute+=dur;
     chronic+=dur;
@@ -2462,45 +2532,6 @@ function drawVolumeChart(wIdx,log){
         y:{grid:{color:"rgba(255,255,255,0.04)"},ticks:{color:"#5A5A60",font:{size:10},callback:v=>v+" km"},border:{display:false}}
       }
     }
-  });
-}
-
-/* readiness form */
-function renderReadinessForm(){
-  const today=todayISO();
-  const r=Store.get(STORAGE.readiness,{})[today]||{};
-  return `
-    <div class="read-row"><label>Sleep (hours)</label><input type="number" id="r-sleep" step="0.5" min="0" max="14" value="${r.sleep||""}" style="width:80px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);text-align:center"></div>
-    <div class="read-row"><label>Soreness (1=none, 5=high)</label><div class="stars" id="r-sore">${[1,2,3,4,5].map(i=>`<button class="star ${r.soreness>=i?"on":""}" data-v="${i}">${i}</button>`).join("")}</div></div>
-    <div class="read-row"><label>Resting HR (bpm)</label><input type="number" id="r-rhr" inputmode="numeric" value="${r.rhr||""}" placeholder="optional" style="width:80px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);text-align:center"></div>
-    <div class="read-row"><label>Energy (1=low, 5=high)</label><div class="stars" id="r-energy">${[1,2,3,4,5].map(i=>`<button class="star ${r.energy>=i?"on":""}" data-v="${i}">${i}</button>`).join("")}</div></div>
-    <div class="text-center mt-12"><button class="btn btn-primary" id="btn-save-read">Save today's readiness</button></div>
-  `;
-}
-function attachReadinessHandlers(){
-  let st={soreness:0,energy:0};
-  const today=todayISO();
-  const r=Store.get(STORAGE.readiness,{})[today]||{};
-  st.soreness=r.soreness||0;st.energy=r.energy||0;
-  document.querySelectorAll("#r-sore .star").forEach(b=>b.addEventListener("click",()=>{
-    st.soreness=parseInt(b.dataset.v);
-    document.querySelectorAll("#r-sore .star").forEach(x=>x.classList.toggle("on",parseInt(x.dataset.v)<=st.soreness));
-  }));
-  document.querySelectorAll("#r-energy .star").forEach(b=>b.addEventListener("click",()=>{
-    st.energy=parseInt(b.dataset.v);
-    document.querySelectorAll("#r-energy .star").forEach(x=>x.classList.toggle("on",parseInt(x.dataset.v)<=st.energy));
-  }));
-  document.getElementById("btn-save-read").addEventListener("click",()=>{
-    const all=Store.get(STORAGE.readiness,{});
-    all[today]={
-      sleep:document.getElementById("r-sleep").value||null,
-      soreness:st.soreness,
-      rhr:document.getElementById("r-rhr").value||null,
-      energy:st.energy,
-      ts:Date.now()
-    };
-    Store.set(STORAGE.readiness,all);
-    flash("Readiness saved");
   });
 }
 
@@ -2707,7 +2738,7 @@ function openStrengthModal(){
   const html=`
     <div class="modal-h">
       <div class="modal-title">Log Strength Session</div>
-      <button class="icon-btn modal-close">${iconClose()}</button>
+      <button class="icon-btn modal-close" aria-label="Close">${iconClose()}</button>
     </div>
     <div class="modal-body">
       <div class="field-row">
@@ -2764,8 +2795,10 @@ function renderSpeed(){
     }
   }
   const filtered=speeds.filter(s=>filter==="all"||s.phase.short===filter);
-  const completed=speeds.filter(s=>s.lg&&(s.lg.status==="done"||s.lg.status==="modified")).length;
-  const inZone=speeds.filter(s=>{
+  // Use filtered set for both Planned and Completed so the filter chips stay coherent.
+  const planned=filtered.length;
+  const completed=filtered.filter(s=>s.lg&&(s.lg.status==="done"||s.lg.status==="modified")).length;
+  const inZone=filtered.filter(s=>{
     if(!s.lg||!s.lg.avgHR)return false;
     const hr=parseInt(s.lg.avgHR);
     if(s.session.zone==="z2")return hr>=155&&hr<=171;
@@ -2773,14 +2806,15 @@ function renderSpeed(){
     return true;
   }).length;
   const zonePct=completed?Math.round(inZone/completed*100):0;
+  const completedPct=planned?Math.round(completed/planned*100):0;
 
   document.getElementById("view-speed").innerHTML=`
     <div class="view-head">
       <div><div class="view-title">Speed Sessions</div><div class="view-sub">All quality workouts across the 32-week plan</div></div>
     </div>
     <div class="grid grid-3 mb-16">
-      <div class="metric card"><div class="metric-label">Planned</div><div class="metric-value">${speeds.length}</div></div>
-      <div class="metric card"><div class="metric-label">Completed</div><div class="metric-value">${completed}</div><div class="metric-sub">${Math.round(completed/speeds.length*100)}%</div></div>
+      <div class="metric card"><div class="metric-label">Planned</div><div class="metric-value">${planned}</div></div>
+      <div class="metric card"><div class="metric-label">Completed</div><div class="metric-value">${completed}</div><div class="metric-sub">${completedPct}%</div></div>
       <div class="metric card"><div class="metric-label">In correct HR zone</div><div class="metric-value">${zonePct}%</div><div class="metric-sub">of completed sessions</div></div>
     </div>
     <div class="row mb-16">
@@ -2807,7 +2841,7 @@ function renderSpeed(){
             <td>${s.session.hrTarget}</td>
             <td>${lg.avgHR||lg.pace||lg.actualDuration?`${lg.actualDuration?lg.actualDuration+"min":""}${lg.pace?` · ${lg.pace}/km`:""}${lg.avgHR?` · HR ${lg.avgHR}`:""}${lg.rpe?` · RPE ${lg.rpe}`:""}`:"—"}</td>
             <td>${status?`<span class="status-${status}">${status}</span>`:'<span class="muted">—</span>'}</td>
-            <td><button class="icon-btn edit-speed">${iconEdit()}</button></td>
+            <td><button class="icon-btn edit-speed" aria-label="Edit ${escapeHtml(s.session.title)}">${iconEdit()}</button></td>
           </tr>`;
         }).join("")}</tbody>
       </table>
@@ -2948,7 +2982,7 @@ function renderProfile(){
       <ul style="font-size:13.5px;line-height:1.7;color:var(--text);padding-left:18px;margin-top:6px">
         <li><b style="color:var(--orange)">Primary lever:</b> Running Economy — VO₂max already 96th percentile, ceiling reached. RE is where the gains live.</li>
         <li><b style="color:var(--orange)">Key target:</b> VLamax suppression via Z1 volume → preserves fat oxidation at marathon pace, prevents glycogen depletion.</li>
-        <li><b style="color:var(--orange)">Heat → Cold transition:</b> Bangkok 30–35 °C training builds heat acclimatization. Fuji 5–10 °C gives ~2–3% performance bonus, but maintain heat exposure (sauna 4×/wk × 30min) through W30 to preserve plasma volume gains.</li>
+        <li><b style="color:var(--orange)">Heat → Cold transition:</b> Bangkok 30–35 °C training builds heat acclimatization. Fuji 5–10 °C gives ~2–3% performance bonus. Hold sauna 3–4×/wk × 30 min through W27 to preserve plasma-volume gains, then taper sauna with training (1–2×/wk W28–30, last sauna D-3) so heat stress doesn't compete with neuromuscular freshening.</li>
         <li><b style="color:var(--orange)">INSCYD pending:</b> will establish VLamax, FatMax, fuel combustion curves for zone recalibration in Phase 3.</li>
       </ul>
     </div>
@@ -3021,7 +3055,7 @@ function renderBiometrics(){
 
     <div class="grid grid-2 mb-16">
       <div class="card">
-        <div class="card-h">Today's Entry — ${fmtLong(new Date())}</div>
+        <div class="card-h">Today's Entry — ${fmtLong(todayUTC())}</div>
         <div class="field-row mt-12">
           <div class="field"><label>Weight (kg)</label><input id="b-weight" type="number" step="0.1" inputmode="decimal" value="${todayR.weight||""}"></div>
           <div class="field"><label>RHR (bpm)</label><input id="b-rhr" type="number" inputmode="numeric" value="${todayR.rhr||""}" placeholder="morning, supine"></div>
@@ -4134,7 +4168,7 @@ function renderRaceWeek(){
       <div class="card-h">Heat → Cold Transition Notes</div>
       <ul style="font-size:13px;line-height:1.7;padding-left:18px">
         <li>Bangkok training (30–35 °C) provides heat acclimatization → ~2–3% performance bonus at Fuji 5–10 °C</li>
-        <li>Maintain heat exposure: sauna 4×/wk × 30 min through W30, last sauna D-3</li>
+        <li>Heat exposure: 3–4×/wk × 30 min sauna through W27, then taper to 1–2×/wk W28–30 (parallel to training taper), last sauna D-3</li>
         <li>Race day: dress for ~10 °C warmer than ambient (you'll warm up fast)</li>
         <li>Hydration: cold weather suppresses thirst — <b>drink to plan, not to thirst</b></li>
         <li>Pre-race: throwaway long-sleeve + space blanket at start corral</li>
@@ -4242,6 +4276,27 @@ function renderSettings(){
    20. UTILITIES
    ========================================================================= */
 function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);}
+
+// Map a session-type string to a primary HR zone bucket.
+// Used so TID% reflects what the user actually did, not the planned session
+// (e.g. user logs "modified" and changes easy_z1 → speed).
+function typeToZone(t){
+  if(!t)return null;
+  if(t==="easy_z1"||t==="recovery"||t==="long_run")return "z1";
+  if(t==="mp_long"||t==="tune_race")return "z2";
+  if(t==="hill")return "mixed";
+  if(t==="speed"||t==="strength_a"||t==="strength_b"||t==="rest")return null; // fall back to planned
+  return null;
+}
+function zoneForLog(lg,planned){
+  // The session modal saves the actually-performed session type as `lg.type`.
+  // When the user logs "modified" + changes type, prefer that for TID%.
+  if(lg && lg.type){
+    const z=typeToZone(lg.type);
+    if(z)return z;
+  }
+  return planned ? planned.zone : null;
+}
 function flash(msg){
   const f=document.createElement("div");
   f.innerHTML=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px;color:#34D399"><polyline points="20 6 9 17 4 12"/></svg>${msg}`;
@@ -4254,19 +4309,36 @@ function flash(msg){
 /* =========================================================================
    21. INIT
    ========================================================================= */
+let __countdownTimer=null;
 function init(){
   State.init();
   setupMobileChrome();
   renderNav();
   renderCountdown();
-  // First-run welcome
-  if(!Store.get("fuji_first_run",false)){
+  // Storage unavailable → show a non-blocking banner once per tab.
+  if(!__storageOK && !sessionStorage.getItem("__fuji_storage_warned")){
+    try{ sessionStorage.setItem("__fuji_storage_warned","1"); }catch(_){}
+    showStorageWarning();
+  }
+  // First-run welcome (skip if storage is broken — would re-show every load)
+  if(__storageOK && !Store.get("fuji_first_run",false)){
     showWelcome();
     Store.set("fuji_first_run",true);
   }
   switchView("weekly");
-  // Recompute countdown daily
-  setInterval(renderCountdown,3600000);
+  // Recompute countdown hourly. Clear any prior timer in case init runs twice.
+  if(__countdownTimer)clearInterval(__countdownTimer);
+  __countdownTimer=setInterval(renderCountdown,3600000);
+}
+
+function showStorageWarning(){
+  const b=document.createElement("div");
+  b.setAttribute("role","alert");
+  b.style.cssText="position:fixed;left:50%;bottom:calc(20px + var(--safe-b));transform:translateX(-50%);max-width:90vw;background:rgba(244,63,94,0.16);border:1px solid rgba(244,63,94,0.5);color:#fff;padding:12px 18px 12px 14px;border-radius:14px;font-size:13px;z-index:300;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 12px 32px rgba(0,0,0,0.5);display:flex;align-items:center;gap:10px";
+  b.innerHTML='<span style="font-size:16px">⚠️</span><span style="flex:1">Storage unavailable — logs won’t persist (Private Mode?). Export JSON if you need to keep data.</span><button aria-label="Dismiss" style="background:transparent;border:none;color:#fff;font-size:18px;cursor:pointer;padding:0 4px">×</button>';
+  b.querySelector("button").addEventListener("click",()=>b.remove());
+  document.body.appendChild(b);
+  setTimeout(()=>{if(b.parentNode)b.remove();},10000);
 }
 
 function showWelcome(){
@@ -4309,14 +4381,15 @@ function showWelcome(){
   `);
 }
 
-document.addEventListener("DOMContentLoaded",init);
-if(document.readyState!=="loading")init();
+// Single init: either DOM is still loading (wait), or it's already parsed (run now).
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init,{once:true});
+else init();
 
 /* ============================================================
    PWA · Service Worker registration (offline cache)
    Requires sw.js at site root · works on Vercel/Netlify/GH Pages
    ============================================================ */
-if("serviceWorker" in navigator && location.protocol==="https:"){
+if("serviceWorker" in navigator && (location.protocol==="https:" || location.hostname==="localhost" || location.hostname==="127.0.0.1")){
   window.addEventListener("load",()=>{
     navigator.serviceWorker.register("./sw.js").then(reg=>{
       console.log("[PWA] SW registered · scope:",reg.scope);
