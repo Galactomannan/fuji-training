@@ -1,8 +1,12 @@
 /* James Endurance Plan 2026 — Service Worker
-   Cache-first strategy for offline use on iPhone/iPad/Mac
-   Bump CACHE name when you update index.html to force refresh */
+   Strategy:
+   - HTML navigations  → network-first (so a fresh deploy is seen on first reload)
+   - Other GET assets  → stale-while-revalidate (fast, self-healing)
+   - Offline fallback  → cached index.html
 
-const CACHE = "fuji-v1-2026-04";
+   Bump CACHE whenever you ship a new index.html so old shells are evicted. */
+
+const CACHE = "fuji-v2-2026-05";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,31 +31,42 @@ self.addEventListener("activate", e => {
   );
 });
 
+function isCacheable(req, resp) {
+  if (!resp || resp.status !== 200 || resp.type === "opaque") return false;
+  return req.url.startsWith(self.location.origin) || req.url.includes("cdnjs.cloudflare.com");
+}
+
 self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) {
-        // Update cache in background (stale-while-revalidate)
-        fetch(e.request).then(fresh => {
-          if (fresh && fresh.status === 200) {
-            caches.open(CACHE).then(c => c.put(e.request, fresh.clone()));
-          }
-        }).catch(() => {});
-        return cached;
-      }
-      return fetch(e.request).then(resp => {
-        if (resp && resp.status === 200 && (e.request.url.startsWith(self.location.origin) || e.request.url.includes("cdnjs.cloudflare.com"))) {
+  const req = e.request;
+  if (req.method !== "GET") return;
+
+  // Network-first for navigations / HTML so users see new versions immediately.
+  if (req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html")) {
+    e.respondWith(
+      fetch(req).then(resp => {
+        if (isCacheable(req, resp)) {
           const clone = resp.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+          caches.open(CACHE).then(c => c.put(req, clone));
         }
         return resp;
-      }).catch(() => {
-        // Offline fallback for navigation
-        if (e.request.mode === "navigate") {
-          return caches.match("./index.html");
+      }).catch(() =>
+        caches.match(req).then(cached => cached || caches.match("./index.html"))
+      )
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for everything else.
+  e.respondWith(
+    caches.match(req).then(cached => {
+      const fetched = fetch(req).then(resp => {
+        if (isCacheable(req, resp)) {
+          const clone = resp.clone();
+          caches.open(CACHE).then(c => c.put(req, clone));
         }
-      });
+        return resp;
+      }).catch(() => cached); // offline: return cached if we have it
+      return cached || fetched;
     })
   );
 });
